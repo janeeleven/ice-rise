@@ -1,0 +1,10 @@
+dependencies:
+  - python=3.9
+  - numpy
+  - scipy
+  - matplotlib
+  - jupyterlab
+  - pandas
+  - xarray
+  - meshio
+  - gcsfs
