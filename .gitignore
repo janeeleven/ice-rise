@@ -1,1 +1,10 @@
 python/env/
+python/.ipynb_checkpoints/
+python/old_presentation.ipynb
+python/figure2.ipynb
+python/figures.ipynb
+python/netcdf_from_vtu.ipynb
+python/__pycache__
+python/out.vtu_
+results/figures
+python/out.vtu
