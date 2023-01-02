@@ -1,0 +1,6 @@
+0.2 500 icerise_accum_driven.sif
+0.2 1000 icerise_accum_driven.sif
+0.2 1500 icerise_accum_driven.sif
+0.2 2000 icerise_accum_driven.sif
+0.2 2500 icerise_accum_driven.sif
+0.2 3000 icerise_accum_driven.sif

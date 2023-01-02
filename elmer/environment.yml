@@ -1,0 +1,7 @@
+dependencies:
+  - python=3.9
+  - google-cloud-sdk
+  - numpy
+  - scipy
+  - pandas
+  - xarray

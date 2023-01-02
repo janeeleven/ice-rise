@@ -1,0 +1,464 @@
+#
+#
+#
+
+!Ice Divide Migration Spin Up (flux-controled)
+!to be run in conjunction with automated scripts in the google cloud
+!Adapted from J. Kinglsake and C.M. Garcia
+! - Janie Levin (janette_levin@brown.edu) (12/28/22)
+
+!!!! CONSTANTS
+
+! density rho = 910*1e-6/(31556926)^2 (MPa year2 m-2)
+$Rho = 9.1386e-19  
+
+! acceleration due to gravity  g= 9.81*(31556926)^2 (m year-2) 
+$g = 9.7692e15
+
+
+! Surface Temperature (K) 
+$Ts = 253.15
+
+!Heat Flux QG=60*1e-3*1e-6*31556926 (MPa m year-1)
+$QG=1.5779
+
+! Thickness of Ice (m)
+$H = 600
+
+! Accumulation base rate 	
+$a0 = 0.2
+
+! Characteristic length - very large to approximate constant accumulation
+$xa = 10000000000000000
+
+! Final position of divide
+$DivPosition = 0 
+
+! Legacy variable
+$IceCorePosition = 0.0
+
+! Glen's Flow Law power
+
+$n=3
+$Factor=1
+
+! conductivity and heat capacity function of temperature
+$ function conductivity(T)  { _conductivity=9.828*exp(-5.7E-03*T)}
+$ function capacity(T) { _capacity=146.3+(7.253*T)}
+
+!! Glen's flow law----- with the Arrhenius factor a function of temperature
+!-----------------
+
+! units are Pa^-3 yr^-1------------agrees with Paterson
+$ function A(T) { _A = 1.0e-15*(0.2071*exp(0.5978*(T-273.15))+0.09833*exp(0.14747*(T-273.15)))}
+
+Header
+  Mesh DB "./shared_directory/icerise_run/" "mesh"
+  Include Path "shared_directory/icerise_run/"
+  Results Directory "shared_directory/icerise_run"
+End
+
+Constants
+  Stefan Boltzmann = Real 0.0
+  Gas Constant = Real 8.314 !Joule/mol x  K 
+
+End
+
+Simulation
+  Coordinate System = "Cartesian 2D" 
+  Simulation Type = Transient
+
+  Timestepping Method = "bdf"
+  BDF Order = 1
+  Timestep Intervals = 100
+  Output Intervals = 1	!
+  Timestep Sizes = 10   
+  Steady State Min Iterations = 1
+  Steady State Max Iterations = 1
+
+  Set Dirichlet BCs By BC Numbering = Logical True
+  Output File = "initialcond.dat"
+!  Restart File = "initialcond.dat"
+
+  max output level = 3
+End
+
+Body 1
+  name = Ice
+  Equation = 1
+  Material = 1
+  Body force = 1
+  Initial Condition = 1
+End
+
+
+! The Free surface
+Body 2
+  name = FreeSurf
+  Equation = 2
+  Body Force = 2
+  Material = 1
+  Initial Condition = 2
+End
+
+Body Force 1
+  Flow BodyForce 1 = Real 0.0
+  Flow BodyForce 2 = Real $ -g
+  DGAge Source = Real 1.0  ! result in years
+
+  Friction Heat = Logical True
+End
+
+Body Force 2
+   hs Accumulation Flux 1 = Real 0.0e0
+   hs Accumulation Flux 2 = Variable Coordinate 1
+    Real MATC "a0*(1 + tx/xa)"
+   hs Accumulation Flux 3 = Real 0.0e0 
+End
+
+Initial Condition 1
+  Depth = Variable Coordinate 2
+   Real MATC "H-tx"
+  Height = Variable Coordinate 2
+   Real MATC "tx"
+  Temperature = Real $ Ts
+  DGAge = Real 0.0
+End
+
+
+Initial Condition 2
+ hs = Equals Coordinate 2
+ hsREF = Equals Coordinate 2
+End
+
+
+Material 1
+
+
+  Density = Real $ Rho
+  Viscosity Model = String "power law"
+  Viscosity Exponent = Real $ 1.0/n
+  Critical Shear Rate = Real $ 1.0e-3/31556926.0
+  Viscosity = Variable Temperature  ! 10e-6/(2A)^(1/n) MPa a^1/3
+    Real  MATC "1e-6*pow(2.0*A(tx)*Factor,-1.0/n)"
+
+  Heat Capacity = Variable Temperature
+    Real MATC "capacity(tx)*(31556926.0)^(2.0)"
+  Heat Conductivity = Variable Temperature
+    Real MATC "conductivity(tx)*(31556926.0)*1.0E-06"
+
+!!! Legacy Settings (DGAge)
+! this has to be sometimes set in diagnostic
+  ! runs to avoid infinite [actually O(1/machine precision)]
+  ! ages at stagnation points in the flow field
+  DGAge Upper Limit = Real 100000
+  DGAge Lower Limit = Real 0
+  DGAge Gamma = Real 0.0
+
+End
+
+!!!!! SOLVERS
+
+
+Solver 1
+  Equation = "Mesh Update"
+  Exec Solver = "Before Timestep"
+
+  Linear System Solver = "Iterative"
+  Linear System Iterative Method = "BiCGStab"
+  Linear System Max Iterations = 300
+  Linear System Convergence Tolerance = 1.0e-6
+  Linear System Abort Not Converged = False
+  Linear System Preconditioning = "ILU0"
+  Linear System Residual Output = 0
+End
+
+! Flow-depth on the unstructured FEM-mesh
+! not really needed, but nice for post-processing
+! Just un-comment Exec Solver = Never, in order
+! to skip it
+!-------------------------------------------------
+
+Solver 2
+   Equation = "Flowdepth"
+   Exec Solver = "Before TimeStep"
+
+   Procedure = File "./shared_directory/icerise_run/src/Flowdepth" "FlowDepthSolver"
+   Variable = String "Depth"
+   Variable DOFs = 1
+   Linear System Solver = "Iterative"
+!   Linear System Solver = "Direct"         
+   Linear System Direct Method = "MUMPS"  ! MUMPS only works in parallel, o if in serial and using direct method, comment this and it still works.
+   Linear System Iterative Method = "GCR"
+   Linear System Max Iterations = 500
+   Linear System Convergence Tolerance = 1.0E-06
+   Linear System Abort Not Converged = True
+   Linear System Preconditioning = "ILU0"
+   Linear System Residual Output = 0
+   ! this sets the direction
+   ! -1 is negative z-direction (upside down)
+   ! +1 is positive (bottom up)
+   Gradient = Real -1.0E00
+
+    Calc Free Surface = Logical True
+  Freesurf Name = String "FreeSurf"
+  Exported Variable 2 = String "FreeSurfGrad1"
+  Exported Variable 2 DOFs = 1
+  Exported Variable 3 = String "FreeSurfGrad2"
+  Exported Variable 3 DOFs = 1
+End
+
+! This solves the height above the bedrock
+!------------------------------------------
+Solver 3
+  Equation = "Flowheight" ! mind different name
+
+  Exec Solver = "Before TimeStep"
+
+  Procedure = File "shared_directory/icerise_run/src/Flowdepth" "FlowDepthSolver"
+
+  Variable = String "Height" ! mind different name for variable
+  Variable DOFs = 1
+
+!   Linear System Solver = "Direct"
+!   Linear System Direct Method = "Umfpack"
+
+  Linear System Solver = "Iterative"
+  Linear System Max Iterations = 500
+  Linear System Iterative Method = "GCR"
+  Linear System Convergence Tolerance = 1.0E-06
+  Linear System Abort Not Converged = True
+  Linear System Preconditioning = "ILU0"
+  Linear System Residual Output = 0
+
+ Gradient = Real 1.0E00 ! this time positive
+ Calc Free Surface = Logical False
+End
+
+
+Solver 4
+  Equation = "Heat Equation"
+
+  Stabilization Method = Stabilized  
+
+!   Linear System Solver = "Direct"
+   Linear System Direct Method = "umfpack"
+ 
+   Linear System Solver = "Iterative"
+   Linear System Iterative Method = "GCR"
+   Linear System Max Iterations = 500
+   Linear System Convergence Tolerance = 1.0e-6
+   Linear System Abort Not Converged = False
+   Linear System Preconditioning = "ILU2"
+   Linear System Residual Output = 0
+
+   Nonlinear System Max Iterations = 1
+   Nonlinear System Convergence Tolerance = 1.0e-4
+   Nonlinear System Newton After Iterations = 1000
+   Nonlinear System Newton After Tolerance = 1.0e-5
+   Nonlinear System Relaxation Factor = 1
+
+   Steady State Convergence Tolerance = 1.0e-3
+  
+
+
+
+End
+
+! the Navier-Stokes Solver, solves ice flow dynamics
+!---------------------------------------------------
+Solver 5
+  Equation = "Navier-Stokes"
+
+  Flow model = String "Stokes"
+
+  Linear System Solver = "Iterative"
+  Linear System Iterative Method = "GCR"
+  Linear System Max Iterations = 500
+  Linear System Convergence Tolerance = 1.0E-06
+  Linear System Abort Not Converged = False
+  Linear System Preconditioning = "ILU2"
+  Linear System Residual Output = 0
+
+  Nonlinear System Max Iterations = 1
+  Nonlinear System Convergence Tolerance = 1.0E-04
+  Nonlinear System Newton After Iterations = 1000
+  Nonlinear System Newton After Tolerance =  1.0E-05
+  Nonlinear System Relaxation Factor = 1
+
+  Steady State Convergence Tolerance = 1.0E-03
+  Stabilization Method = Stabilized
+End
+
+
+Solver 6
+  Equation =  String "Free Surface Evolution"
+  Exec Solver = "After TimeStep"
+
+  Variable = "hs"
+
+  Procedure = "FreeSurfaceSolver" "FreeSurfaceSolver"
+
+  Linear System Solver = Iterative
+  Linear System Iterative Method = "GCR"
+  Linear System Max Iterations  = 500
+  Linear System Preconditioning = "ILU1"
+  Linear System Convergence Tolerance = 1.0e-06
+  Optimize Bandwidth = Logical False
+
+  Nonlinear System Max Iterations = 1
+  Nonlinear System Min Iterations = 1
+  Nonlinear System Convergence Tolerance = 1.0e-05
+
+  Steady State Convergence Tolerance = 1.0e-3
+
+  Apply Dirichlet = Logical False 
+  Flow Solution Name = String "Flow Solution" 
+  Stabilization Method = Stabilize
+  Optimize Bandwidth = Logical False 
+  Exported Variable 1 = hs Residual
+  Exported Variable 1 DOFS = 1
+  Exported Variable 2 = hsREF
+  Exported Variable 2 DOFS = 1
+End
+
+
+!  Age Solver
+
+Solver 7
+  Equation = "AdvReact"
+  Exec Solver = "After Timestep"
+  Procedure = File "AdvectionReaction" "AdvectionReactionSolver"
+  ! this is the DG variable, which is not part of the output
+  Variable =  -nooutput "DGAge"
+  ! this tells that the solver is run on DG mesh
+  Discontinuous Galerkin = Logical True
+  ! the solver can account for upper and lower limits of the variable
+  ! imposed by formulation of an variational inequality (VI)
+  ! next line switches the VI to be accounted for
+  Limit Solution = Logical True
+
+  Linear System Solver = Iterative
+  Linear System Iterative Method = BiCGStab
+  Linear System Max Iterations  = 1000
+  Linear System Preconditioning = ILU1
+  Linear System Convergence Tolerance = 1.0e-06
+  ! Variational inequality makes it a non-linear problem
+  Nonlinear System Max Iterations = 40
+  Nonlinear System Min Iterations = 2
+  Nonlinear System Convergence Tolerance = 1.0e-04
+
+  ! This is the variable that is used to interpolate
+  ! the DG solution to the regular FEM mesh in order
+  ! to get a correct output
+  Exported Variable 1 = Age
+  Exported Variable 1 DOFS = 1
+End
+
+Solver 8
+  Equation = "Surface Data"
+  Exec Solver = "After Saving"
+
+  Procedure = "SaveData" "SaveLine"
+  Filename =  "Surface.dat"
+
+  Polyline Coordinates(2,2) = Real $ IceCorePosition -250 IceCorePosition 1250 ! not sure what this does JNL
+End
+
+Solver 9
+  Equation = "VTU Output"
+  Exec Solver = "After Saving"
+
+  Procedure = "ResultOutputSolve" "ResultOutputSolver"
+  
+  Output File Name = "Output"
+  
+  Output Format = String "vtu"
+  Vector Field 1 = String "Velocity"
+  Scalar Field 1 = String "Depth"
+  Scalar Field 2 = String "Height"
+  Scalar Field 3 = String "Pressure"
+  Scalar Field 4 = String "Temperature"
+  Scalar Field 5 = String "Age"
+  Scalar Field 6 = String "D 2"
+  Scalar Field 7 = String "D 4"
+End
+
+!!!!! EQUATIONS
+
+Equation 1
+  Active Solvers (8) = 1 2 3 4 5 7 8 9 
+  Flow Solution Name = String "Flow Solution"
+  Convection = String "Computed"
+End
+
+
+Equation 2
+  Active Solvers(1) = 6
+  Flow Solution Name = String "Flow Solution"
+  Convection = String "Computed"  
+End
+
+!!!!! BOUNDARY CONDITIONS
+
+Boundary Condition 1
+  name = Bedrock
+  Target Boundaries = 1 
+
+  Height = Real 0.0
+
+  Velocity 1 = Real 0.0
+  Velocity 2 = Real 0.0
+
+  Heat Flux BC = Logical True
+  Heat Flux = Real $ QG
+
+  Mesh Update 1 = Real 0.0
+  Mesh Update 2 = Real 0.0
+
+  Save Line = Logical True
+End
+
+
+Boundary Condition 2
+  name = Surface
+  Target Boundaries = 3
+  Body Id = 2
+
+  Depth = Real 0.0
+
+  Temperature = Real $ Ts
+
+  Age = Real 0.0
+  DGAge = Real 0.0
+
+  Mesh Update 1 = Real 0.0
+  Mesh Update 2 = Variable hs, hsREF
+   Real MATC "tx(0)-tx(1)"
+
+  Save Line = Logical True
+End
+
+!Boundary Conditions for flux driven migration
+
+Boundary Condition 3
+  name = DownStream_left
+  Target Boundaries = 2
+  Velocity 1 = Variable Coordinate 1, Depth, Height
+     Real MATC "-a0/(tx(1)+tx(2))*(DivPosition - tx(0))" !!simplified equation
+! the minus sing in the above expression is to take account of the sign of the horizontal velocity. Plug flow should be towards the left at the left boundary i.e. negative
+
+  Mesh Update 1 = Real 0.0
+  Save Line = Logical False
+End
+
+Boundary Condition 4
+  name = DownStream_right
+  Target Boundaries = 4
+
+  Velocity 1 = Variable Coordinate 1, Depth, Height
+     Real MATC "a0/(tx(1)+tx(2))*(tx(0)-DivPosition)" !!!simplified
+  Mesh Update 1 = Real 0.0
+
+  Save Line = Logical False
+End
